@@ -1,0 +1,5 @@
+{
+  "name": "Copy of StreamMaster IPTV",
+  "description": "A retro-styled IPTV player featuring M3U playlist parsing, HLS streaming support, and a skeuomorphic interface simulating a physical TV and decoder set-top box.",
+  "requestFramePermissions": []
+}

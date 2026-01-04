@@ -1,0 +1,357 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no" />
+    <meta name="theme-color" content="#111111" />
+    <title>StreamMaster IPTV</title>
+    
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    
+    <!-- React & ReactDOM (UMD - Global Variables) -->
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+    
+    <!-- Babel Standalone (The "Translator") -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+
+    <!-- HLS.js (Video Player Engine) -->
+    <script src="https://unpkg.com/hls.js/dist/hls.min.js"></script>
+
+    <style>
+      @import url('https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Inter:wght@400;600;800&display=swap');
+      
+      body {
+        background-color: #111;
+        color: white;
+        font-family: 'Inter', sans-serif;
+        overscroll-behavior: none;
+        user-select: none;
+        -webkit-user-select: none;
+      }
+
+      /* Custom Scrollbar */
+      ::-webkit-scrollbar { width: 8px; }
+      ::-webkit-scrollbar-track { background: #1a1a1a; }
+      ::-webkit-scrollbar-thumb { background: #444; border-radius: 4px; }
+      
+      .font-mono-display { font-family: 'Share Tech Mono', monospace; }
+
+      .scanlines {
+        background: linear-gradient(to bottom, rgba(255,255,255,0), rgba(255,255,255,0) 50%, rgba(0,0,0,0.2) 50%, rgba(0,0,0,0.2));
+        background-size: 100% 4px;
+        animation: scanline 10s linear infinite;
+        pointer-events: none;
+      }
+      
+      .glow-text { text-shadow: 0 0 5px rgba(50, 255, 50, 0.5); }
+      .glow-text-error { text-shadow: 0 0 5px rgba(255, 50, 50, 0.5); }
+
+      /* Error Overlay Style */
+      #error-overlay {
+        display: none;
+        position: fixed;
+        top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0,0,0,0.9);
+        color: red;
+        z-index: 9999;
+        padding: 20px;
+        font-family: monospace;
+        white-space: pre-wrap;
+      }
+    </style>
+  <script type="importmap">
+{
+  "imports": {
+    "react/": "https://esm.sh/react@^19.2.3/",
+    "react": "https://esm.sh/react@^19.2.3",
+    "react-dom/": "https://esm.sh/react-dom@^19.2.3/",
+    "hls.js": "https://esm.sh/hls.js@^1.6.15",
+    "lucide-react": "https://esm.sh/lucide-react@^0.562.0"
+  }
+}
+</script>
+</head>
+  <body>
+    <div id="root"></div>
+    <div id="error-overlay"></div>
+
+    <script>
+      // Global Error Handler to debug "Black Screen"
+      window.onerror = function(msg, url, line, col, error) {
+        const overlay = document.getElementById('error-overlay');
+        overlay.style.display = 'block';
+        overlay.innerHTML = `<h1>CRITICAL ERROR</h1><p>${msg}</p><p>Line: ${line}</p><p>${error ? error.stack : ''}</p>`;
+        return false;
+      };
+    </script>
+
+    <!-- APP SCRIPT - NO IMPORTS, PURE GLOBALS -->
+    <script type="text/babel">
+      const { useState, useEffect, useRef } = React;
+
+      // --- ICONS (Inlined SVG Components) ---
+      const Icon = ({ path, size = 24, className = "" }) => (
+        <svg xmlns="http://www.w3.org/2000/svg" width={size} height={size} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+          {path}
+        </svg>
+      );
+      
+      const Icons = {
+        Power: (p) => <Icon {...p} path={<><path d="M18.36 6.64a9 9 0 1 1-12.73 0"></path><line x1="12" y1="2" x2="12" y2="12"></line></>} />,
+        Volume2: (p) => <Icon {...p} path={<><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"></path></>} />,
+        VolumeX: (p) => <Icon {...p} path={<><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"></polygon><line x1="23" y1="9" x2="17" y2="15"></line><line x1="17" y1="9" x2="23" y2="15"></line></>} />,
+        ChevronUp: (p) => <Icon {...p} path={<polyline points="18 15 12 9 6 15"></polyline>} />,
+        ChevronDown: (p) => <Icon {...p} path={<polyline points="6 9 12 15 18 9"></polyline>} />,
+        List: (p) => <Icon {...p} path={<><line x1="8" y1="6" x2="21" y2="6"></line><line x1="8" y1="12" x2="21" y2="12"></line><line x1="8" y1="18" x2="21" y2="18"></line><line x1="3" y1="6" x2="3.01" y2="6"></line><line x1="3" y1="12" x2="3.01" y2="12"></line><line x1="3" y1="18" x2="3.01" y2="18"></line></>} />,
+        Upload: (p) => <Icon {...p} path={<><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path><polyline points="17 8 12 3 7 8"></polyline><line x1="12" y1="3" x2="12" y2="15"></line></>} />,
+        Globe: (p) => <Icon {...p} path={<><circle cx="12" cy="12" r="10"></circle><line x1="2" y1="12" x2="22" y2="12"></line><path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10 15.3 15.3 0 0 1-4-10 15.3 15.3 0 0 1 4-10z"></path></>} />,
+        PlayCircle: (p) => <Icon {...p} path={<><circle cx="12" cy="12" r="10"></circle><polygon points="10 8 16 12 10 16 10 8"></polygon></>} />,
+        Loader2: (p) => <Icon {...p} path={<path d="M21 12a9 9 0 1 1-6.219-8.56"></path>} />,
+        Signal: (p) => <Icon {...p} path={<path d="M2 20h.01M7 20v-4M12 20v-8M17 20V8M22 20V4"></path>} />,
+        AlertCircle: (p) => <Icon {...p} path={<><circle cx="12" cy="12" r="10"></circle><line x1="12" y1="8" x2="12" y2="12"></line><line x1="12" y1="16" x2="12.01" y2="16"></line></>} />,
+        RefreshCw: (p) => <Icon {...p} path={<><polyline points="23 4 23 10 17 10"></polyline><polyline points="1 20 1 14 7 14"></polyline><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"></path></>} />
+      };
+
+      // --- LOGIC: Parser ---
+      const parseM3U = (content) => {
+        if (!content) return [];
+        const lines = content.replace(/\r/g, '').split('\n');
+        const playlist = [];
+        let currentName, currentGroup, currentLogo;
+
+        for (let i = 0; i < lines.length; i++) {
+          const line = lines[i].trim();
+          if (!line) continue;
+          if (line.startsWith('#EXTINF:')) {
+            const info = line.substring(8);
+            const lastComma = info.lastIndexOf(',');
+            if (lastComma !== -1) currentName = info.substring(lastComma + 1).trim();
+            const logoMatch = line.match(/tvg-logo="([^"]*)"/);
+            if (logoMatch) currentLogo = logoMatch[1];
+            const groupMatch = line.match(/group-title="([^"]*)"/);
+            if (groupMatch) currentGroup = groupMatch[1];
+          } else if (!line.startsWith('#') && line.length > 5) {
+             let finalName = currentName;
+             if (!finalName) {
+                const parts = line.split('/');
+                finalName = parts[parts.length - 1]?.split('.')[0] || `Channel ${playlist.length + 1}`;
+             }
+             playlist.push({ id: Math.random().toString(36).substr(2, 9), url: line, name: finalName, group: currentGroup || 'General', logo: currentLogo });
+             currentName = currentGroup = currentLogo = undefined;
+          }
+        }
+        return playlist;
+      };
+
+      // --- COMPONENT: VideoPlayer ---
+      const VideoPlayer = ({ src, volume, isPowerOn, channelInfo, showInfoBanner, onRetry }) => {
+        const videoRef = useRef(null);
+        const hlsRef = useRef(null);
+        const [errorState, setErrorState] = useState(null);
+        const [isLoading, setIsLoading] = useState(false);
+
+        useEffect(() => { if (videoRef.current) videoRef.current.volume = volume; }, [volume]);
+
+        useEffect(() => {
+          setErrorState(null);
+          setIsLoading(true);
+
+          if (!isPowerOn || !src) {
+              if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+              setIsLoading(false);
+              return;
+          }
+
+          const video = videoRef.current;
+          if (!video) return;
+          
+          let hls;
+          if (Hls.isSupported()) {
+            hls = new Hls({ enableWorker: true, lowLatencyMode: true });
+            hlsRef.current = hls;
+            hls.loadSource(src);
+            hls.attachMedia(video);
+            hls.on(Hls.Events.MANIFEST_PARSED, () => { setIsLoading(false); video.play().catch(e => console.log(e)); });
+            hls.on(Hls.Events.ERROR, (e, data) => {
+              if (data.fatal) {
+                 if(data.type === Hls.ErrorTypes.NETWORK_ERROR) hls.startLoad();
+                 else { setIsLoading(false); setErrorState('fatal'); hls.destroy(); }
+              }
+            });
+          } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+            video.src = src;
+            video.addEventListener('loadedmetadata', () => { setIsLoading(false); video.play(); });
+            video.addEventListener('error', () => { setIsLoading(false); setErrorState('fatal'); });
+          }
+          return () => { if (hlsRef.current) hlsRef.current.destroy(); };
+        }, [src, isPowerOn]);
+
+        if (!isPowerOn) return (
+            <div className="w-full h-full bg-black flex items-center justify-center relative overflow-hidden">
+                <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/5 to-transparent skew-y-12 pointer-events-none"></div>
+                <div className="w-2 h-2 bg-red-900/50 rounded-full animate-pulse shadow-[0_0_10px_rgba(200,0,0,0.5)]"></div>
+            </div>
+        );
+
+        return (
+          <div className="w-full h-full bg-black relative overflow-hidden group">
+            <div className="absolute inset-0 z-10 pointer-events-none scanlines opacity-20"></div>
+            <div className={`absolute top-4 left-0 right-0 mx-auto w-[90%] md:w-[80%] bg-black/60 backdrop-blur-md z-30 transition-all duration-500 rounded-lg border border-white/10 p-4 ${showInfoBanner ? 'translate-y-0 opacity-100' : '-translate-y-20 opacity-0'}`}>
+              <div className="flex items-center gap-4">
+                 <div className="text-4xl font-mono-display font-bold text-yellow-500">{channelInfo ? String(channelInfo.index + 1).padStart(3, '0') : '---'}</div>
+                 <div className="flex-1 min-w-0">
+                    <h2 className="text-xl font-bold text-white truncate">{channelInfo?.name || "No Signal"}</h2>
+                 </div>
+              </div>
+            </div>
+            <video ref={videoRef} className="w-full h-full object-contain relative z-0" playsInline />
+            {isLoading && !errorState && <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/20"><Icons.Loader2 className="animate-spin text-blue-500 mb-2"/><p className="font-mono text-blue-400 text-xs">TUNING...</p></div>}
+            {errorState === 'fatal' && <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/80 text-white"><Icons.AlertCircle className="mb-4 text-red-500"/><h3 className="font-bold text-red-400">SIGNAL LOST</h3><button onClick={onRetry} className="mt-4 bg-red-600 px-4 py-2 rounded font-bold flex gap-2"><Icons.RefreshCw size={16}/> RETRY</button></div>}
+          </div>
+        );
+      };
+
+      // --- COMPONENT: DecoderBox ---
+      const DecoderBox = ({ onImport, onLoadDemo, status, currentChannelIndex }) => {
+        const [activeTab, setActiveTab] = useState(null);
+        const [url, setUrl] = useState('');
+        
+        const getStatusColor = () => {
+             if (status === 'error') return 'text-red-500 glow-text-error';
+             if (status === 'loading') return 'text-yellow-400 animate-pulse';
+             if (status === 'active') return 'text-green-500 glow-text';
+             return 'text-green-500/50';
+        }
+
+        return (
+          <div className="w-full max-w-xl mx-auto relative z-20">
+            <div className="bg-slate-800 rounded-lg p-1 border-b-4 border-black relative shadow-2xl">
+              <div className="bg-slate-800 h-16 md:h-20 rounded flex items-center justify-between px-4 border border-slate-700 gap-4">
+                  <div className="hidden md:block text-[10px] text-slate-500 font-mono absolute top-2 left-4">STB-2000 PRO</div>
+                  <div className="flex items-center gap-4 mt-2 md:mt-0">
+                      <div className="w-24 md:w-32 h-10 bg-black rounded border-2 border-slate-600 flex items-center justify-center overflow-hidden">
+                          <div className={`font-mono-display text-xl font-bold ${getStatusColor()}`}>
+                             {status === 'active' ? `CH-${String(currentChannelIndex + 1).padStart(3, '0')}` : status.toUpperCase().substring(0,4)}
+                          </div>
+                      </div>
+                  </div>
+                  <div className="flex-1 flex justify-end gap-2 relative">
+                      <button onClick={() => setActiveTab(activeTab === 'file' ? null : 'file')} className="h-8 px-3 bg-slate-700 rounded text-xs text-white font-bold hover:bg-slate-600 flex items-center gap-2"><Icons.Upload size={14}/> LOCAL</button>
+                      <button onClick={() => setActiveTab(activeTab === 'url' ? null : 'url')} className="h-8 px-3 bg-slate-700 rounded text-xs text-white font-bold hover:bg-slate-600 flex items-center gap-2"><Icons.Globe size={14}/> NET</button>
+                      
+                      {activeTab && (
+                          <div className="absolute top-full mt-2 right-0 w-72 bg-slate-800 border border-slate-600 p-4 shadow-2xl z-50 rounded text-white">
+                              {activeTab === 'file' ? (
+                                  <div className="space-y-4">
+                                      <label className="block w-full h-20 border-2 border-dashed border-slate-600 rounded flex items-center justify-center cursor-pointer hover:bg-slate-700"><input type="file" className="hidden" accept=".m3u,.txt" onChange={(e)=>{ if(e.target.files[0]) { const r=new FileReader(); r.onload=(ev)=>onImport(ev.target.result,false); r.readAsText(e.target.files[0]); setActiveTab(null); } }}/><span className="text-xs text-slate-400">Select File</span></label>
+                                      <button onClick={() => { onLoadDemo(); setActiveTab(null); }} className="w-full bg-yellow-600 hover:bg-yellow-500 py-2 rounded text-xs font-bold flex justify-center gap-2"><Icons.PlayCircle size={14}/> LOAD DEMO</button>
+                                  </div>
+                              ) : (
+                                  <div className="space-y-4">
+                                      <input value={url} onChange={e=>setUrl(e.target.value)} className="w-full bg-black/30 border border-slate-600 p-2 text-xs rounded text-white" placeholder="https://..." />
+                                      <button onClick={() => { if(url) { onImport(url, true); setActiveTab(null); setUrl(''); }}} className="w-full bg-blue-600 hover:bg-blue-500 py-2 rounded text-xs font-bold">LOAD</button>
+                                  </div>
+                              )}
+                          </div>
+                      )}
+                  </div>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      // --- MAIN APP ---
+      const DEMO_PLAYLIST = `#EXTM3U\n#EXTINF:-1,Big Buck Bunny\nhttps://test-streams.mux.dev/x36xhzz/x36xhzz.m3u8`;
+
+      const App = () => {
+        const [channels, setChannels] = useState([]);
+        const [currentIdx, setCurrentIdx] = useState(0);
+        const [volume, setVolume] = useState(0.5);
+        const [isMuted, setIsMuted] = useState(false);
+        const [powerOn, setPowerOn] = useState(true);
+        const [showList, setShowList] = useState(false);
+        const [status, setStatus] = useState('idle');
+        const [showBanner, setShowBanner] = useState(false);
+        const bannerTimeout = useRef(null);
+
+        const triggerBanner = () => {
+          setShowBanner(true);
+          if (bannerTimeout.current) clearTimeout(bannerTimeout.current);
+          bannerTimeout.current = setTimeout(() => setShowBanner(false), 4000);
+        };
+
+        const handleImport = async (content, isUrl) => {
+          setStatus('loading');
+          if (isUrl) {
+             try {
+               const res = await fetch(`https://api.allorigins.win/raw?url=${encodeURIComponent(content)}`);
+               if(!res.ok) throw new Error("Fetch failed");
+               process(await res.text());
+             } catch(e) { 
+               console.error(e); 
+               setStatus('error');
+             }
+          } else {
+             setTimeout(() => process(content), 500);
+          }
+        };
+
+        const process = (txt) => {
+           const parsed = parseM3U(txt);
+           if(parsed.length > 0) { setChannels(parsed); setCurrentIdx(0); setStatus('active'); triggerBanner(); if(!powerOn) setPowerOn(true); }
+           else setStatus('error');
+        };
+
+        return (
+          <div className="min-h-screen bg-[#111] flex flex-col items-center p-4 gap-8">
+            <div className="w-full max-w-5xl flex flex-col gap-8 my-auto relative z-10">
+              <DecoderBox onImport={handleImport} onLoadDemo={() => handleImport(DEMO_PLAYLIST, false)} status={status} currentChannelIndex={currentIdx} />
+              
+              <div className="flex flex-col lg:flex-row gap-8 items-stretch">
+                  <div className="flex-1 relative aspect-video bg-gray-900 rounded-2xl p-4 border-8 border-[#1a1a1a] shadow-2xl">
+                      <div className="absolute bottom-2 left-1/2 -translate-x-1/2 text-white/20 text-[10px] font-bold tracking-[0.5em] z-20">STREAMMASTER</div>
+                      <div className={`absolute bottom-3 right-6 w-1.5 h-1.5 rounded-full z-20 ${powerOn ? 'bg-red-500' : 'bg-red-900'}`}></div>
+                      <div className="w-full h-full bg-black rounded overflow-hidden relative border border-gray-800">
+                          <VideoPlayer key={channels[currentIdx]?.url || 'empty'} src={channels[currentIdx]?.url} volume={isMuted ? 0 : volume} isPowerOn={powerOn} channelInfo={channels[currentIdx] ? {...channels[currentIdx], index: currentIdx} : null} showInfoBanner={showBanner} onRetry={()=>{}} />
+                          {showList && powerOn && (
+                              <div className="absolute inset-0 bg-black/90 z-40 p-6 flex flex-col">
+                                  <div className="flex justify-between items-center mb-4 border-b border-gray-700 pb-2"><h3 className="font-bold">Channels</h3><button onClick={() => setShowList(false)}>✕</button></div>
+                                  <div className="overflow-y-auto flex-1 space-y-1">
+                                      {channels.map((ch, idx) => (
+                                          <button key={idx} onClick={() => { setCurrentIdx(idx); setShowList(false); triggerBanner(); }} className={`w-full text-left px-3 py-2 rounded flex gap-3 ${idx === currentIdx ? 'bg-blue-900/50 text-blue-100' : 'text-gray-400 hover:bg-white/5'}`}>
+                                              <span className="font-mono opacity-50">{String(idx+1).padStart(3,'0')}</span><span className="truncate">{ch.name}</span>
+                                          </button>
+                                      ))}
+                                  </div>
+                              </div>
+                          )}
+                      </div>
+                  </div>
+
+                  <div className="w-full lg:w-24 bg-[#222] rounded-xl p-4 flex lg:flex-col justify-between items-center gap-4 border-t border-white/10 shadow-xl">
+                      <button onClick={() => setPowerOn(!powerOn)} className={`w-12 h-12 rounded-full flex items-center justify-center ${powerOn ? 'bg-green-600' : 'bg-red-600'}`}><Icons.Power size={20}/></button>
+                      <div className="h-px w-full bg-white/10 hidden lg:block"></div>
+                      <div className="flex flex-row lg:flex-col gap-2">
+                          <button onClick={() => { if(channels.length) setCurrentIdx((currentIdx + 1) % channels.length); triggerBanner(); }} className="w-12 h-12 bg-[#333] rounded-lg flex items-center justify-center hover:bg-[#444]"><Icons.ChevronUp size={24}/></button>
+                          <button onClick={() => { if(channels.length) setCurrentIdx(currentIdx - 1 < 0 ? channels.length - 1 : currentIdx - 1); triggerBanner(); }} className="w-12 h-12 bg-[#333] rounded-lg flex items-center justify-center hover:bg-[#444]"><Icons.ChevronDown size={24}/></button>
+                      </div>
+                      <div className="flex flex-row lg:flex-col gap-2">
+                           <button onClick={() => setIsMuted(!isMuted)} className="w-12 h-12 bg-[#333] rounded-lg flex items-center justify-center hover:bg-[#444]">{isMuted ? <Icons.VolumeX size={20}/> : <Icons.Volume2 size={20}/>}</button>
+                      </div>
+                      <div className="flex-1 hidden lg:block"></div>
+                      <button onClick={() => setShowList(!showList)} className="w-12 h-12 bg-blue-700 rounded-full flex items-center justify-center hover:bg-blue-600"><Icons.List size={20}/></button>
+                  </div>
+              </div>
+            </div>
+          </div>
+        );
+      };
+
+      const root = ReactDOM.createRoot(document.getElementById('root'));
+      root.render(<App />);
+    </script>
+  </body>
+</html>

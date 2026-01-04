@@ -1,0 +1,21 @@
+{
+  "name": "StreamMaster IPTV",
+  "short_name": "StreamMaster",
+  "start_url": ".",
+  "display": "standalone",
+  "background_color": "#111111",
+  "theme_color": "#111111",
+  "orientation": "landscape",
+  "icons": [
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/3208/3208708.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "https://cdn-icons-png.flaticon.com/512/3208/3208708.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}
