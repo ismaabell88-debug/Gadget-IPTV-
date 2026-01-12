@@ -3,6 +3,8 @@ import Hls from 'hls.js';
 import { Signal, AlertCircle, RefreshCw, Loader2 } from 'lucide-react';
 import { VideoPlayerProps } from '../types';
 
+declare const dashjs: any;
+
 export const VideoPlayer: React.FC<VideoPlayerProps> = ({ 
   src, 
   volume, 
@@ -30,13 +32,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
     setErrorState(null);
     setIsLoading(true);
 
+    // Guard clause: If power is off or no src, clean up and stop.
     if (!isPowerOn || !src) {
         if (hlsRef.current) {
             hlsRef.current.destroy();
             hlsRef.current = null;
         }
         if (dashRef.current) {
-            // @ts-ignore - Dash types might not be perfectly inferred
+            // @ts-ignore
             dashRef.current.reset();
             dashRef.current = null;
         }
@@ -44,54 +47,39 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         return;
     }
 
-    const initPlayer = () => {
+    const initPlayer = (videoSrc: string) => {
       const video = videoRef.current;
       if (!video) return;
 
-      // Cleanup previous instances
-      if (hlsRef.current) {
-        hlsRef.current.destroy();
-        hlsRef.current = null;
-      }
-      if (dashRef.current) {
+      // Cleanup existing players
+      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+      if (dashRef.current) { 
         // @ts-ignore
-        dashRef.current.reset();
-        dashRef.current = null;
+        dashRef.current.reset(); dashRef.current = null; 
       }
 
       // INTELLIGENT STREAM DETECTION
-      // 1. Check for DASH (.mpd)
-      const isDash = src.includes('.mpd');
-      
-      // 2. Check for Static Video Files (MP4, MKV, etc) that should run natively
-      //    We strip query params to check the extension of the path
-      const cleanPath = src.split('?')[0].toLowerCase();
+      const isDash = videoSrc.includes('.mpd');
+      // Use a safe check for extensions by stripping query params
+      const cleanPath = videoSrc.split('?')[0].toLowerCase();
       const isStaticVideo = cleanPath.endsWith('.mp4') || cleanPath.endsWith('.mkv') || cleanPath.endsWith('.webm') || cleanPath.endsWith('.mov');
-
-      // 3. HLS Fallback logic:
-      //    If it contains .m3u8, it is HLS.
-      //    If it is NOT Dash and NOT a static video file, we ASSUME it is HLS (e.g. php scripts, obfuscated links).
-      //    This solves the issue with links like "php/artvYT.php" that redirect to m3u8.
-      const isHls = src.includes('.m3u8') || (!isDash && !isStaticVideo);
+      
+      // HLS Fallback: If explicit m3u8 OR not Dash/Static, assume HLS (handles obfuscated URLs)
+      const isHls = videoSrc.includes('.m3u8') || (!isDash && !isStaticVideo);
 
       // --- DASH SETUP ---
-      // @ts-ignore - Check if dashjs is available globally or imported
       if (isDash && typeof dashjs !== 'undefined') {
-        console.log("Initializing DASH Player");
         // @ts-ignore
         const player = dashjs.MediaPlayer().create();
-        player.initialize(video, src, true);
-        
+        player.initialize(video, videoSrc, true);
         // @ts-ignore
         player.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, () => {
            setIsLoading(false);
            video.play().catch(e => console.warn("DASH Autoplay blocked", e));
         });
-        
         // @ts-ignore
         player.on(dashjs.MediaPlayer.events.ERROR, (e: any) => {
            console.error("DASH Error", e);
-           // If DASH fails, maybe try generic? But usually fatal.
            setIsLoading(false);
            setErrorState('fatal');
         });
@@ -99,20 +87,14 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       } 
       // --- HLS SETUP ---
       else if (Hls.isSupported() && isHls) {
-        console.log("Initializing HLS Player (hls.js)");
         const hls = new Hls({
           enableWorker: true,
           lowLatencyMode: true,
           backBufferLength: 90,
-          manifestLoadingTimeOut: 30000,
-          manifestLoadingMaxRetry: 3,
-          levelLoadingTimeOut: 30000,
-          fragLoadingTimeOut: 30000,
-          startFragPrefetch: true,
         });
 
         hlsRef.current = hls;
-        hls.loadSource(src);
+        hls.loadSource(videoSrc);
         hls.attachMedia(video);
 
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
@@ -122,7 +104,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
         hls.on(Hls.Events.ERROR, (_event, data) => {
           if (data.fatal) {
-            console.warn("HLS Fatal Error:", data.type);
             switch (data.type) {
               case Hls.ErrorTypes.NETWORK_ERROR:
                 hls.startLoad();
@@ -139,10 +120,9 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           }
         });
       } 
-      // --- NATIVE SAFARI HLS / STANDARD VIDEO ---
+      // --- NATIVE SAFARI HLS ---
       else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        console.log("Initializing Native HLS (Safari)");
-        video.src = src;
+        video.src = videoSrc;
         video.addEventListener('loadedmetadata', () => {
           setIsLoading(false);
           video.play().catch(e => console.warn("Autoplay blocked", e));
@@ -152,30 +132,23 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           setErrorState('fatal');
         });
       } 
-      // --- GENERIC FALLBACK ---
+      // --- GENERIC VIDEO ---
       else {
-         console.log("Initializing Generic Video Player");
-         video.src = src;
+         video.src = videoSrc;
          video.play()
             .then(() => setIsLoading(false))
-            .catch(() => {
-                setIsLoading(false);
-                setErrorState('fatal');
-            });
+            .catch(() => { setIsLoading(false); setErrorState('fatal'); });
       }
     };
 
-    initPlayer();
+    // We passed the guard check above, so src is string here.
+    initPlayer(src);
 
     return () => {
-      if (hlsRef.current) {
-        hlsRef.current.destroy();
-        hlsRef.current = null;
-      }
-      if (dashRef.current) {
+      if (hlsRef.current) { hlsRef.current.destroy(); hlsRef.current = null; }
+      if (dashRef.current) { 
         // @ts-ignore
-        dashRef.current.reset();
-        dashRef.current = null;
+        dashRef.current.reset(); dashRef.current = null; 
       }
     };
   }, [src, isPowerOn]);
@@ -183,7 +156,6 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   if (!isPowerOn) {
     return (
       <div className="w-full h-full bg-black flex items-center justify-center relative overflow-hidden">
-        {/* Screen reflection/glare */}
         <div className="absolute inset-0 bg-gradient-to-tr from-transparent via-white/5 to-transparent skew-y-12 pointer-events-none"></div>
         <div className="w-2 h-2 bg-red-900/50 rounded-full animate-pulse shadow-[0_0_10px_rgba(200,0,0,0.5)]"></div>
       </div>
@@ -192,15 +164,12 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
   return (
     <div className="w-full h-full bg-black relative overflow-hidden group">
-      {/* CRT Scanline Effect */}
       <div className="absolute inset-0 z-10 pointer-events-none scanlines opacity-20"></div>
-      
-      {/* Vignette */}
       <div className="absolute inset-0 z-10 pointer-events-none bg-[radial-gradient(circle_at_center,transparent_50%,rgba(0,0,0,0.4)_100%)]"></div>
 
-      {/* Info Banner - Top Channel Info */}
+      {/* Top Channel Banner */}
       <div 
-        className={`absolute top-4 left-0 right-0 mx-auto w-[90%] md:w-[80%] bg-black/60 backdrop-blur-md z-30 
+        className={`absolute top-4 left-0 right-0 mx-auto w-[90%] md:w-[80%] bg-black/70 backdrop-blur-md z-30 
         transition-all duration-500 ease-out transform rounded-lg border border-white/10 p-4 shadow-2xl
         ${showInfoBanner ? 'translate-y-0 opacity-100' : '-translate-y-20 opacity-0 pointer-events-none'}`}
       >
@@ -208,13 +177,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
            <div className="text-4xl font-mono-display font-bold text-yellow-500 drop-shadow-[0_2px_4px_rgba(0,0,0,0.8)]">
               {channelInfo?.index !== undefined ? String(channelInfo.index + 1).padStart(3, '0') : '---'}
            </div>
-           
            {channelInfo?.logo && (
               <div className="w-12 h-12 bg-white/5 rounded p-1 flex items-center justify-center border border-white/10">
                   <img src={channelInfo.logo} className="max-w-full max-h-full object-contain" alt="Logo" onError={(e) => e.currentTarget.style.display = 'none'} />
               </div>
            )}
-           
            <div className="flex-1 min-w-0">
               <h2 className="text-lg md:text-xl font-bold text-white truncate drop-shadow-md">
                 {channelInfo?.name || "No Signal"}
@@ -227,63 +194,61 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         </div>
       </div>
 
-      {/* Video Element */}
-      <video 
-        ref={videoRef} 
-        className="w-full h-full object-contain relative z-0" 
-        playsInline 
-      />
+      <video ref={videoRef} className="w-full h-full object-contain relative z-0" playsInline />
 
       {/* EPG / INFO BOTTOM BANNER */}
-      {/* Displays EPG info or default text if unavailable */}
-      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/95 via-black/60 to-transparent p-4 pb-6 z-20 pointer-events-none">
-          <div className="flex flex-col items-start gap-1 max-w-4xl mx-auto pl-2 md:pl-0">
-              <div className="flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse shadow-[0_0_8px_red]"></span>
-                <span className="text-[10px] font-bold text-red-500 tracking-widest uppercase">LIVE BROADCAST</span>
+      <div className="absolute bottom-0 left-0 right-0 z-20 pointer-events-none">
+          <div className="bg-black/70 backdrop-blur-md border-t border-white/10 p-4 pb-6 transition-all duration-300">
+              <div className="flex flex-col items-start gap-1 max-w-4xl mx-auto pl-2 md:pl-0">
+                  <div className="flex items-center gap-3 w-full">
+                      <div className="flex items-center gap-2 shrink-0">
+                        <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse shadow-[0_0_8px_red]"></span>
+                        <span className="text-[10px] font-bold text-red-500 tracking-widest uppercase">EN VIVO</span>
+                      </div>
+                      <div className="w-px h-3 bg-white/20"></div>
+                      <div className="text-white/70 text-xs font-bold uppercase tracking-wider truncate">
+                         {channelInfo?.name}
+                      </div>
+                  </div>
+
+                  <div className="mt-1 w-full">
+                      {currentProgram ? (
+                         <h3 className="text-yellow-400 font-bold text-lg md:text-xl drop-shadow-sm leading-tight animate-in slide-in-from-bottom-2 duration-500">
+                            {currentProgram}
+                         </h3>
+                      ) : (
+                         <h3 className="text-white/40 font-mono text-sm md:text-base italic">
+                            Sin información disponible
+                         </h3>
+                      )}
+                  </div>
               </div>
-              <h3 className="text-white font-bold text-lg md:text-xl drop-shadow-md leading-tight">
-                {channelInfo?.name || "Unknown Channel"}
-              </h3>
-              <p className="text-gray-300 text-sm font-mono opacity-80 mt-1 max-w-md">
-                {currentProgram ? (
-                   <span className="text-yellow-400 font-bold">{currentProgram}</span>
-                ) : (
-                   "Programación: Sin información disponible"
-                )}
-              </p>
           </div>
       </div>
 
-      {/* Loading State */}
       {isLoading && !errorState && (
         <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/20">
             <Loader2 size={48} className="animate-spin text-blue-500 mb-2" />
-            <p className="font-mono text-blue-400 tracking-widest text-xs animate-pulse">TUNING...</p>
+            <p className="font-mono text-blue-400 tracking-widest text-xs animate-pulse">SINTONIZANDO...</p>
         </div>
       )}
 
-      {/* No Signal State */}
       {!src && !isLoading && (
         <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-[#101010]">
            <Signal size={64} className="animate-pulse mb-4 text-gray-700"/>
-           <p className="font-mono text-gray-600 tracking-[0.5em] text-sm animate-pulse">NO SIGNAL</p>
+           <p className="font-mono text-gray-600 tracking-[0.5em] text-sm animate-pulse">SIN SEÑAL</p>
         </div>
       )}
 
-      {/* Error State */}
       {errorState === 'fatal' && (
         <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/80 backdrop-blur-sm text-white p-6 text-center animate-in fade-in duration-300">
             <AlertCircle size={48} className="mb-4 text-red-500"/>
-            <h3 className="text-xl font-bold text-red-400 mb-2">SIGNAL LOST</h3>
-            <p className="text-sm text-gray-400 mb-6 max-w-xs mx-auto">
-                Unable to connect to the broadcast source.
-            </p>
+            <h3 className="text-xl font-bold text-red-400 mb-2">ERROR DE SEÑAL</h3>
             <button 
                 onClick={onRetry}
                 className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-6 py-2 rounded-full text-sm font-bold transition-transform active:scale-95 shadow-lg shadow-red-900/20 pointer-events-auto"
             >
-                <RefreshCw size={16} /> RECONNECT
+                <RefreshCw size={16} /> REINTENTAR
             </button>
         </div>
       )}

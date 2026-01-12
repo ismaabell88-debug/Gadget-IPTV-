@@ -1,12 +1,25 @@
 /**
- * Scrapes GatoTV "Ahora" page using a CORS proxy to get current programming.
- * NOTE: This relies on the HTML structure of a third-party site. 
- * If GatoTV changes their layout, this parser might need updates.
+ * Utility to normalize strings for comparison:
+ * - Lowercase
+ * - Remove accents (NFD normalization)
+ * - Remove non-alphanumeric characters
+ */
+export const normalizeChannelName = (name: string): string => {
+  if (!name) return '';
+  return name
+    .toLowerCase()
+    .normalize("NFD")
+    .replace(/[\u0300-\u036f]/g, "") // Elimina acentos (é -> e, ü -> u)
+    .replace(/[^a-z0-9]/g, "");      // Elimina espacios y símbolos
+};
+
+/**
+ * Scrapes GatoTV "Ahora" page using a CORS proxy.
  */
 export const fetchGatoEPG = async (): Promise<Record<string, string>> => {
     try {
-      // We use the "Guía TV Ahora" page which lists what is playing currently
       const targetUrl = 'https://www.gatotv.com/guia_tv/ahora';
+      // Use allorigins to bypass CORS
       const proxyUrl = `https://api.allorigins.win/get?url=${encodeURIComponent(targetUrl)}`;
       
       const response = await fetch(proxyUrl);
@@ -17,69 +30,89 @@ export const fetchGatoEPG = async (): Promise<Record<string, string>> => {
   
       if (!htmlContent) return {};
   
-      // Parse HTML
       const parser = new DOMParser();
       const doc = parser.parseFromString(htmlContent, 'text/html');
       
       const epgMap: Record<string, string> = {};
   
-      // GatoTV structure logic (Heuristic based on typical table layouts)
-      // Usually rows are inside tables or div grids.
-      // Strategy: Find elements that look like channel names, then find the program in the same row.
-      
-      // Look for table rows typically used in EPGs
-      const rows = doc.querySelectorAll('tr, div.tbl_EPG_row');
+      // GatoTV structure usually involves tables for the grid
+      const rows = doc.querySelectorAll('tr');
       
       rows.forEach(row => {
-          // Attempt to find the channel name cell/div
-          // Often contains an image (logo) or a link with the channel name
-          const channelNode = row.querySelector('a[href*="/canal/"], img[alt]');
-          
+          // 1. Find Channel Name/Logo
+          // Usually in a cell with class 'logo_canal' or just an image with alt text
+          const imgNode = row.querySelector('img[alt]');
           let channelName = '';
-          if (channelNode) {
-              if (channelNode.tagName === 'IMG') {
-                  channelName = (channelNode as HTMLImageElement).alt;
-              } else {
-                  channelName = channelNode.textContent?.trim() || '';
+          
+          if (imgNode) {
+              channelName = (imgNode as HTMLImageElement).alt;
+          } else {
+              // Fallback: Check for links with /canal/ in href
+              const linkNode = row.querySelector('a[href*="/canal/"]');
+              if (linkNode) {
+                  channelName = linkNode.textContent?.trim() || '';
               }
           }
-  
-          if (!channelName) return;
-  
-          // Attempt to find the time/program cell
-          // It's usually a cell containing a time format (HH:MM) followed by text
-          // We look for cells that are NOT the channel name
-          const cells = row.querySelectorAll('td, div');
+
+          if (!channelName || channelName.length < 2) return;
+
+          // 2. Find Program Title
+          // Strategy: Look for the cell that comes AFTER the channel cell, 
+          // or look for specific classes used by GatoTV
           let programTitle = '';
-  
-          // Heuristic: The program is usually the text content with the most length 
-          // or specifically styled. Let's grab text that looks like a title.
-          for (let i = 0; i < cells.length; i++) {
-              const text = cells[i].textContent?.trim() || '';
-              // Avoid the channel name itself and short time strings
-              if (text && !text.includes(channelName) && text.length > 3) {
-                  // Simple check: does it look like a time? "14:00"
-                  if (!text.match(/^\d{2}:\d{2}$/)) {
+
+          // Specific class lookup
+          const titleDiv = row.querySelector('.titulo_programa, .programa_actual, div[style*="font-weight:bold"]');
+          if (titleDiv && titleDiv.textContent) {
+              programTitle = titleDiv.textContent.trim();
+          } 
+          
+          // Heuristic: Neighboring cell lookup
+          if (!programTitle) {
+              // Get all cells
+              const cells = Array.from(row.querySelectorAll('td'));
+              // Find index of cell containing the channel name/img
+              const channelCellIndex = cells.findIndex(c => c.querySelector('img') || c.textContent?.includes(channelName));
+              
+              if (channelCellIndex !== -1 && channelCellIndex + 1 < cells.length) {
+                  // The next cell usually contains the program
+                  const nextCell = cells[channelCellIndex + 1];
+                  const text = nextCell.textContent?.trim();
+                  // Check if it looks like a program (not a time, not empty)
+                  if (text && text.length > 2 && !text.match(/^\d{1,2}:\d{2}$/)) {
                       programTitle = text;
-                      // Often the title is mixed with time "14:00 Los Simpsons", clean it?
-                      // For now, take the raw text as it provides context.
-                      break; 
                   }
               }
           }
+
+          // Fallback: scan all cells for the longest text that isn't the channel name
+          if (!programTitle) {
+             const cells = row.querySelectorAll('td');
+             for (const cell of Array.from(cells)) {
+                 const txt = cell.textContent?.trim() || '';
+                 if (txt.length > 5 && !txt.includes(channelName) && !normalizeChannelName(txt).includes(normalizeChannelName(channelName))) {
+                     // heuristic: exclude simple times
+                     if (!txt.match(/^\d{1,2}:\d{2}$/)) {
+                        programTitle = txt;
+                        break; 
+                     }
+                 }
+             }
+          }
   
           if (channelName && programTitle) {
-              // Normalize key: lowercase, remove spaces for better matching
-              const key = channelName.toLowerCase().replace(/[^a-z0-9]/g, '');
-              epgMap[key] = programTitle;
+              const key = normalizeChannelName(channelName);
+              if (key) {
+                  epgMap[key] = programTitle;
+              }
           }
       });
   
-      console.log(`EPG Scraper: Found info for ${Object.keys(epgMap).length} channels.`);
+      console.log(`EPG: Loaded info for ${Object.keys(epgMap).length} channels.`);
       return epgMap;
   
     } catch (e) {
-      console.error("EPG Fetch failed:", e);
+      console.error("EPG Fetch Error:", e);
       return {};
     }
   };
@@ -87,20 +120,26 @@ export const fetchGatoEPG = async (): Promise<Record<string, string>> => {
   export const findProgramForChannel = (channelName: string, epgMap: Record<string, string>): string | null => {
       if (!channelName) return null;
       
-      const normalize = (s: string) => s.toLowerCase().replace(/[^a-z0-9]/g, '');
-      const searchKey = normalize(channelName);
+      const searchKey = normalizeChannelName(channelName);
+      if (!searchKey) return null;
       
-      // 1. Exact match
+      // 1. Exact Match
       if (epgMap[searchKey]) return epgMap[searchKey];
   
-      // 2. Partial match (e.g. "Telefe HD" matches "Telefe")
+      // 2. Fuzzy Match
       const keys = Object.keys(epgMap);
+      
+      // Priority A: The playlist name CONTAINS the web name (e.g. "America TV HD" contains "america")
       for (const key of keys) {
-          if (searchKey.includes(key) || key.includes(searchKey)) {
-              // Avoid matching very short strings to prevent false positives (e.g. "E!" matching "Telefe")
-              if (key.length > 2 && searchKey.length > 2) {
-                  return epgMap[key];
-              }
+          if (searchKey.includes(key) && key.length > 3) {
+              return epgMap[key];
+          }
+      }
+
+      // Priority B: The web name CONTAINS the playlist name (less likely for HD channels, but possible)
+      for (const key of keys) {
+          if (key.includes(searchKey) && searchKey.length > 3) {
+              return epgMap[key];
           }
       }
   
