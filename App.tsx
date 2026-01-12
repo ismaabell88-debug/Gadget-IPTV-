@@ -1,5 +1,5 @@
 import React, { useState, useRef } from 'react';
-import { Power, Volume2, VolumeX, ChevronUp, ChevronDown, List } from 'lucide-react';
+import { Power, Volume2, VolumeX, ChevronUp, ChevronDown, List, Plus, Minus } from 'lucide-react';
 import { Channel, DecoderStatus } from './types';
 import { parseM3U } from './utils/m3uParser';
 import { VideoPlayer } from './components/VideoPlayer';
@@ -117,6 +117,14 @@ export default function App() {
      setTimeout(() => setCurrentIdx(current), 100);
   };
 
+  const adjustVolume = (delta: number) => {
+      setVolume(prev => {
+          const newVol = Math.max(0, Math.min(1, prev + delta));
+          return newVol;
+      });
+      if (isMuted) setIsMuted(false);
+  };
+
   return (
     <div className="min-h-screen bg-[#111] flex flex-col items-center p-4 md:p-8 gap-8 select-none font-sans overflow-y-auto overflow-x-hidden relative">
       
@@ -213,10 +221,16 @@ export default function App() {
                     </button>
                  </div>
 
-                 {/* Volume Group */}
-                 <div className="flex flex-row lg:flex-col gap-2">
-                     <button onClick={() => setIsMuted(!isMuted)} className={`w-12 h-12 rounded-lg flex items-center justify-center shadow-lg active:translate-y-0.5 transition-all border-b-4 border-[#1a1a1a] active:border-b-0 ${isMuted ? 'bg-yellow-700 text-white' : 'bg-[#333] text-gray-400'}`}>
+                 {/* Volume Group (UPDATED) */}
+                 <div className="flex flex-row lg:flex-col gap-2 bg-[#1a1a1a] lg:bg-transparent p-1 lg:p-0 rounded-lg lg:rounded-none border lg:border-0 border-white/5">
+                     <button onClick={() => adjustVolume(0.1)} className="w-10 h-10 lg:w-12 lg:h-12 bg-[#333] hover:bg-[#444] text-gray-300 rounded lg:rounded-lg flex items-center justify-center shadow-lg active:translate-y-0.5 transition-all border-b-0 lg:border-b-4 border-[#1a1a1a] active:border-b-0 active:bg-green-900/50">
+                        <Plus size={18} />
+                     </button>
+                     <button onClick={() => setIsMuted(!isMuted)} className={`w-10 h-10 lg:w-12 lg:h-12 rounded lg:rounded-lg flex items-center justify-center shadow-lg active:translate-y-0.5 transition-all border-b-0 lg:border-b-4 border-[#1a1a1a] active:border-b-0 ${isMuted ? 'bg-yellow-700 text-white' : 'bg-[#333] text-gray-400 hover:bg-[#444]'}`}>
                         {isMuted ? <VolumeX size={20} /> : <Volume2 size={20} />}
+                     </button>
+                     <button onClick={() => adjustVolume(-0.1)} className="w-10 h-10 lg:w-12 lg:h-12 bg-[#333] hover:bg-[#444] text-gray-300 rounded lg:rounded-lg flex items-center justify-center shadow-lg active:translate-y-0.5 transition-all border-b-0 lg:border-b-4 border-[#1a1a1a] active:border-b-0 active:bg-red-900/50">
+                        <Minus size={18} />
                      </button>
                  </div>
 

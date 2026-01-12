@@ -13,6 +13,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 }) => {
   const videoRef = useRef<HTMLVideoElement>(null);
   const hlsRef = useRef<Hls | null>(null);
+  const dashRef = useRef<any | null>(null);
   const [errorState, setErrorState] = useState<'retry' | 'fatal' | null>(null);
   const [isLoading, setIsLoading] = useState(false);
 
@@ -33,18 +34,72 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             hlsRef.current.destroy();
             hlsRef.current = null;
         }
+        if (dashRef.current) {
+            // @ts-ignore - Dash types might not be perfectly inferred
+            dashRef.current.reset();
+            dashRef.current = null;
+        }
         setIsLoading(false);
         return;
     }
-
-    let hls: Hls;
 
     const initPlayer = () => {
       const video = videoRef.current;
       if (!video) return;
 
-      if (Hls.isSupported()) {
-        hls = new Hls({
+      // Cleanup previous instances
+      if (hlsRef.current) {
+        hlsRef.current.destroy();
+        hlsRef.current = null;
+      }
+      if (dashRef.current) {
+        // @ts-ignore
+        dashRef.current.reset();
+        dashRef.current = null;
+      }
+
+      // INTELLIGENT STREAM DETECTION
+      // 1. Check for DASH (.mpd)
+      const isDash = src.includes('.mpd');
+      
+      // 2. Check for Static Video Files (MP4, MKV, etc) that should run natively
+      //    We strip query params to check the extension of the path
+      const cleanPath = src.split('?')[0].toLowerCase();
+      const isStaticVideo = cleanPath.endsWith('.mp4') || cleanPath.endsWith('.mkv') || cleanPath.endsWith('.webm') || cleanPath.endsWith('.mov');
+
+      // 3. HLS Fallback logic:
+      //    If it contains .m3u8, it is HLS.
+      //    If it is NOT Dash and NOT a static video file, we ASSUME it is HLS (e.g. php scripts, obfuscated links).
+      //    This solves the issue with links like "php/artvYT.php" that redirect to m3u8.
+      const isHls = src.includes('.m3u8') || (!isDash && !isStaticVideo);
+
+      // --- DASH SETUP ---
+      // @ts-ignore - Check if dashjs is available globally or imported
+      if (isDash && typeof dashjs !== 'undefined') {
+        console.log("Initializing DASH Player");
+        // @ts-ignore
+        const player = dashjs.MediaPlayer().create();
+        player.initialize(video, src, true);
+        
+        // @ts-ignore
+        player.on(dashjs.MediaPlayer.events.STREAM_INITIALIZED, () => {
+           setIsLoading(false);
+           video.play().catch(e => console.warn("DASH Autoplay blocked", e));
+        });
+        
+        // @ts-ignore
+        player.on(dashjs.MediaPlayer.events.ERROR, (e: any) => {
+           console.error("DASH Error", e);
+           // If DASH fails, maybe try generic? But usually fatal.
+           setIsLoading(false);
+           setErrorState('fatal');
+        });
+        dashRef.current = player;
+      } 
+      // --- HLS SETUP ---
+      else if (Hls.isSupported() && isHls) {
+        console.log("Initializing HLS Player (hls.js)");
+        const hls = new Hls({
           enableWorker: true,
           lowLatencyMode: true,
           backBufferLength: 90,
@@ -61,23 +116,20 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
 
         hls.on(Hls.Events.MANIFEST_PARSED, () => {
           setIsLoading(false);
-          video.play().catch(e => console.warn("Autoplay blocked", e));
+          video.play().catch(e => console.warn("HLS Autoplay blocked", e));
         });
 
         hls.on(Hls.Events.ERROR, (_event, data) => {
-          console.warn("HLS Error:", data.type, data.details);
           if (data.fatal) {
+            console.warn("HLS Fatal Error:", data.type);
             switch (data.type) {
               case Hls.ErrorTypes.NETWORK_ERROR:
-                console.warn("Network error, trying to recover...");
                 hls.startLoad();
                 break;
               case Hls.ErrorTypes.MEDIA_ERROR:
-                console.warn("Media error, trying to recover...");
                 hls.recoverMediaError();
                 break;
               default:
-                console.error("Fatal error", data);
                 setIsLoading(false);
                 setErrorState('fatal');
                 hls.destroy();
@@ -85,8 +137,10 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             }
           }
         });
-      } else if (video.canPlayType('application/vnd.apple.mpegurl')) {
-        // Native HLS support (Safari)
+      } 
+      // --- NATIVE SAFARI HLS / STANDARD VIDEO ---
+      else if (video.canPlayType('application/vnd.apple.mpegurl')) {
+        console.log("Initializing Native HLS (Safari)");
         video.src = src;
         video.addEventListener('loadedmetadata', () => {
           setIsLoading(false);
@@ -96,6 +150,17 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
           setIsLoading(false);
           setErrorState('fatal');
         });
+      } 
+      // --- GENERIC FALLBACK ---
+      else {
+         console.log("Initializing Generic Video Player");
+         video.src = src;
+         video.play()
+            .then(() => setIsLoading(false))
+            .catch(() => {
+                setIsLoading(false);
+                setErrorState('fatal');
+            });
       }
     };
 
@@ -105,6 +170,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       if (hlsRef.current) {
         hlsRef.current.destroy();
         hlsRef.current = null;
+      }
+      if (dashRef.current) {
+        // @ts-ignore
+        dashRef.current.reset();
+        dashRef.current = null;
       }
     };
   }, [src, isPowerOn]);
@@ -127,7 +197,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
       {/* Vignette */}
       <div className="absolute inset-0 z-10 pointer-events-none bg-[radial-gradient(circle_at_center,transparent_50%,rgba(0,0,0,0.4)_100%)]"></div>
 
-      {/* Info Banner */}
+      {/* Info Banner - Top Channel Info */}
       <div 
         className={`absolute top-4 left-0 right-0 mx-auto w-[90%] md:w-[80%] bg-black/60 backdrop-blur-md z-30 
         transition-all duration-500 ease-out transform rounded-lg border border-white/10 p-4 shadow-2xl
@@ -163,6 +233,23 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
         playsInline 
       />
 
+      {/* EPG / INFO BOTTOM BANNER */}
+      {/* Displays EPG info or default text if unavailable */}
+      <div className="absolute bottom-0 left-0 right-0 bg-gradient-to-t from-black/95 via-black/60 to-transparent p-4 pb-6 z-20 pointer-events-none">
+          <div className="flex flex-col items-start gap-1 max-w-4xl mx-auto pl-2 md:pl-0">
+              <div className="flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-red-500 animate-pulse shadow-[0_0_8px_red]"></span>
+                <span className="text-[10px] font-bold text-red-500 tracking-widest uppercase">LIVE BROADCAST</span>
+              </div>
+              <h3 className="text-white font-bold text-lg md:text-xl drop-shadow-md leading-tight">
+                {channelInfo?.name || "Unknown Channel"}
+              </h3>
+              <p className="text-gray-300 text-sm font-mono opacity-80 mt-1 max-w-md">
+                Programación: Sin información disponible
+              </p>
+          </div>
+      </div>
+
       {/* Loading State */}
       {isLoading && !errorState && (
         <div className="absolute inset-0 z-20 flex flex-col items-center justify-center bg-black/20">
@@ -189,7 +276,7 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
             </p>
             <button 
                 onClick={onRetry}
-                className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-6 py-2 rounded-full text-sm font-bold transition-transform active:scale-95 shadow-lg shadow-red-900/20"
+                className="flex items-center gap-2 bg-red-600 hover:bg-red-700 text-white px-6 py-2 rounded-full text-sm font-bold transition-transform active:scale-95 shadow-lg shadow-red-900/20 pointer-events-auto"
             >
                 <RefreshCw size={16} /> RECONNECT
             </button>
