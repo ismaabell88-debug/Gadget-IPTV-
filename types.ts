@@ -13,6 +13,7 @@ export interface VideoPlayerProps {
   volume: number;
   isPowerOn: boolean;
   channelInfo: (Channel & { index: number }) | null;
+  currentProgram?: string | null; // Added for EPG
   showInfoBanner: boolean;
   onRetry: () => void;
 }

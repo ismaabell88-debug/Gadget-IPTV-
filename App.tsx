@@ -1,7 +1,8 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { Power, Volume2, VolumeX, ChevronUp, ChevronDown, List, Plus, Minus } from 'lucide-react';
 import { Channel, DecoderStatus } from './types';
 import { parseM3U } from './utils/m3uParser';
+import { fetchGatoEPG, findProgramForChannel } from './utils/epg';
 import { VideoPlayer } from './components/VideoPlayer';
 import { DecoderBox } from './components/DecoderBox';
 
@@ -26,9 +27,32 @@ export default function App() {
   const [decoderStatus, setDecoderStatus] = useState<DecoderStatus>('idle');
   const [showBanner, setShowBanner] = useState(false);
   
+  // EPG State
+  const [epgData, setEpgData] = useState<Record<string, string>>({});
+  const [currentProgram, setCurrentProgram] = useState<string | null>(null);
+  
   const bannerTimeout = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const currentChannel = channels[currentIdx];
+
+  // Fetch EPG Data once on mount (or could fetch periodically)
+  useEffect(() => {
+    const loadEPG = async () => {
+        const data = await fetchGatoEPG();
+        setEpgData(data);
+    };
+    loadEPG();
+  }, []);
+
+  // Update current program when channel or EPG data changes
+  useEffect(() => {
+    if (currentChannel) {
+        const program = findProgramForChannel(currentChannel.name, epgData);
+        setCurrentProgram(program);
+    } else {
+        setCurrentProgram(null);
+    }
+  }, [currentIdx, channels, epgData]);
 
   const triggerBanner = () => {
     setShowBanner(true);
@@ -167,6 +191,7 @@ export default function App() {
                         volume={isMuted ? 0 : volume}
                         isPowerOn={powerOn}
                         channelInfo={currentChannel ? { ...currentChannel, index: currentIdx } : null}
+                        currentProgram={currentProgram}
                         showInfoBanner={showBanner}
                         onRetry={handleRetry}
                     />

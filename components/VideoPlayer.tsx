@@ -7,7 +7,8 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
   src, 
   volume, 
   isPowerOn, 
-  channelInfo, 
+  channelInfo,
+  currentProgram,
   showInfoBanner,
   onRetry
 }) => {
@@ -245,7 +246,11 @@ export const VideoPlayer: React.FC<VideoPlayerProps> = ({
                 {channelInfo?.name || "Unknown Channel"}
               </h3>
               <p className="text-gray-300 text-sm font-mono opacity-80 mt-1 max-w-md">
-                Programación: Sin información disponible
+                {currentProgram ? (
+                   <span className="text-yellow-400 font-bold">{currentProgram}</span>
+                ) : (
+                   "Programación: Sin información disponible"
+                )}
               </p>
           </div>
       </div>
